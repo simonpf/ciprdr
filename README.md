@@ -1,7 +1,7 @@
 # CIPRDR
 
 The ciprdr package provides functionality for the decompression and parsing
-of cloud-particle images recorded with a CIP probe. So far, only greyscale
+of cloud-particle images recorded with a [cloud imaging probes](http://www.dropletmeasurement.com/cloud-imaging-probe-cip) (CIPs). So far, only greyscale
 images are supported as these were the only ones I worked with.
 
 ## Example image
