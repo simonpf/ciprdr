@@ -1,7 +1,14 @@
+////////////////////////////////////////////////////////////////////////////////
+//
+// Functionality for decoding and parsing of CIP greyscale images.
+//
+// Author: Simon Pfreundschuh
+//
+////////////////////////////////////////////////////////////////////////////////
 #include <iostream>
+#include <fstream>
 #include <bitset>
 #include <memory>
-#include <utility>
 
 struct TimeField {
     short year;
@@ -12,11 +19,6 @@ struct TimeField {
     short second;
     short milliseconds;
     short weekday;
-};
-
-struct IndexField {
-    TimeField time;
-    long offset;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -33,9 +35,9 @@ struct GreyScaleStream {
 
     GreyScaleStream(std::fstream &input_, size_t size_)
         : input(&input_), size(size_), limited(true)
-        {
+    {
             // Nothing to do here.
-        }
+    }
 
     char decompress() {
 
@@ -45,11 +47,16 @@ struct GreyScaleStream {
             // Read byte and decide what to do.
 
             if (limited && (size == 0)) {
-                return 4;
+                    return 4;
             }
-            input->read(reinterpret_cast<char *>(&current_byte), 1);
+
             if (limited) {
-                size--;
+                --size;
+            }
+
+            input->read(reinterpret_cast<char *>(&current_byte), 1);
+            if (input->eof()) {
+                return 4;
             }
 
             bits = std::bitset<8>(current_byte);
@@ -78,7 +85,7 @@ struct GreyScaleStream {
     }
 
 
-    std::fstream * input;
+    std::fstream * input = nullptr;
     size_t count = 0;
     char current_byte = 0;
     char last_two_bits = 0;
@@ -105,9 +112,9 @@ struct ParticleImage {
 
     size_t v_air, count, microseconds, milliseconds, seconds, minutes, hours,
         slices;
-    bool valid;
+    bool valid = true;
     char header[64];
-    char *image;
+    char *image = nullptr;
 
     /**
      * Read particle image from GreyscaleStream object.
@@ -143,24 +150,46 @@ struct ParticleImage {
         hours = get_number(115, 119);
         slices = get_number(120, 127);
 
-        std::cout << "Reading " << slices << " sclices. " << std::endl;
-
-        image = new char[(slices - 1) * 64];
-
-        // Read image slices
-        for (size_t i = 0; i < (slices - 1) * 64; i++) {
-            // Read byte and check for validity.
-            unsigned char in = gs.decompress();
-            if (in > 3) {
-                valid = false;
-                return;
+        if (slices > 1) {
+            image = new char[(slices - 1) * 64];
+            // Read image slices
+            for (size_t i = 0; i < (slices - 1) * 64; ++i) {
+                // Read byte and check for validity.
+                unsigned char in = gs.decompress();
+                if (in > 3) {
+                    valid = false;
+                    return;
+                }
+                image[i] = in;
             }
-            image[i] = in;
         }
+        valid = check();
     }
 
+    ParticleImage(ParticleImage &&other) {
+       v_air = other.v_air;
+       count = other.count;
+       microseconds = other.microseconds;
+       milliseconds = other.milliseconds;
+       seconds = other.seconds;
+       minutes = other.minutes;
+       hours = other.hours;
+       slices = other.slices;
+       valid = other.valid;
+
+       std::copy(other.header, other.header + 64, header);
+       image = other.image;
+       other.image = nullptr;
+    }
+
+    ParticleImage(const ParticleImage &)  = delete;
+    ParticleImage& operator=(const ParticleImage)    = delete;
+    ParticleImage& operator=(      ParticleImage &&) = delete;
+
     ~ParticleImage() {
-        delete image;
+        if (image) {
+            delete[] image;
+        }
     }
 
     /** Return bit from header.
@@ -221,7 +250,6 @@ struct ParticleImage {
         while (in == 3) {
             in = gs.decompress();
         }
-        std::cout << "Skipped " << counter << "." << std::endl;
         return in;
     }
 
@@ -267,13 +295,36 @@ struct PadsImageFile {
         file.seekg(index * 4112, file.beg);
         TimeField tf;
         file.read(reinterpret_cast<char *>(&tf), sizeof(tf));
-        gs = GreyScaleStream(gs);
+        gs = GreyScaleStream(file, 4096);
         return tf;
     }
 
     ParticleImage get_particle_image() {
         ParticleImage pi(gs);
         return pi;
+    }
+
+};
+
+struct PadsIndexFile {
+
+    size_t n_timestamps = 0;
+    std::fstream file;
+
+    PadsIndexFile(std::string filename)
+    : file(filename, std::fstream::in | std::fstream::binary)
+    {
+        file.seekg (0, file.end);
+        size_t length = file.tellg();
+        file.seekg (0, file.beg);
+
+        n_timestamps = length / sizeof(TimeField);
+    }
+
+    TimeField next_index() {
+        TimeField ind;
+        file.read(reinterpret_cast<char *>(&ind), sizeof(ind));
+        return ind;
     }
 
 };

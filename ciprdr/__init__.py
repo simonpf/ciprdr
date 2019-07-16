@@ -1,141 +1,85 @@
+from ciprdr.api import PadsImageFile, PadsIndexFile, ParticleImage
 import os
 import glob
 import ctypes as c
 import datetime
 import numpy as np
 
-################################################################################
-# Load DLL and defined functions.
-################################################################################
+from PIL import Image
 
-path = os.path.join(os.path.dirname(__file__), "..", "ciprdr_cpp*.so")
-lib  = glob.glob(path)[0]
-cip_api = c.cdll.LoadLibrary(lib)
+class ImageFolder:
+    def __init__(self, path):
+        self.index_files = glob.glob(os.path.join(path, "Imageindex*"))
+        self.index_files.sort()
+        self.image_files = glob.glob(os.path.join(path, "Imagefile*"))
+        self.image_files.sort()
 
-#
-# Structure definitions
-#
+    def _extract_images(self, image_index, timestamp_index, path):
+        f = self.image_files[image_index]
+        image = PadsImageFile(f)
+        t = image.set_timestamp_index(timestamp_index).to_datetime()
 
-class TimeField(c.Structure):
-    _fields_ = [("year", c.c_short),
-                ("month", c.c_short),
-                ("day", c.c_short),
-                ("hour", c.c_short),
-                ("minute", c.c_short),
-                ("second", c.c_short),
-                ("milliseconds", c.c_short),
-                ("weekday", c.c_short)]
-
-class ParticleImageStruct(c.Structure):
-    _fields_ = [("v_air", c.c_ulong),
-                ("count", c.c_ulong),
-                ("microseconds", c.c_ulong),
-                ("milliseconds", c.c_ulong),
-                ("seconds", c.c_ulong),
-                ("minutes", c.c_ulong),
-                ("hours", c.c_ulong),
-                ("slices", c.c_ulong),
-                ("valid", c.c_bool),
-                ("header", c.c_byte * 64),
-                ("image", c.POINTER(c.c_byte))]
-
-    @property
-    def __array__(self):
-        return np.ctypeslib.as_array(self.image, shape = (self.slices - 1, 64))
+        # Read all slices from timestamp
+        images = []
+        pi = image.get_particle_image()
+        while(pi.struct.valid):
+            data = np.array((255 / 3) * (3 - pi.data), dtype = np.uint8, copy = True)
+            images += [data]
+            pi = image.get_particle_image()
 
 
+        if len(images) > 0:
+            data = np.concatenate(images)
+            print(data.shape)
+            img = Image.fromarray(data.T, mode = "L")
+            tt = (t.year, t.month, t.day, t.hour,
+                  t.minute, t.second, t.microsecond // 1000)
 
-cip_api.read_image_file.argtypes   = [c.c_char_p]
-cip_api.read_image_file.restype = c.c_void_p
+            image_name = "cip_image_{0:04d}{1:02d}{2:02d}"
+            image_name += "_{3:02d}{4:02d}{5:02d}_{6:03d}.png"
+            image_name = image_name.format(*tt)
 
-cip_api.destroy_image_file.argtypes   = [c.c_void_p]
-cip_api.destroy_image_file.restype = None
+            img.save(os.path.join(path, image_name))
+            print("saved image: ", image_name)
 
-cip_api.set_timestamp_index.argtypes = [c.c_void_p, c.c_ulong]
-cip_api.set_timestamp_index.restype = TimeField
+        del image, images
 
-cip_api.get_particle_image.argtypes   = [c.c_void_p]
-cip_api.get_particle_image.restype = c.POINTER(ParticleImageStruct)
 
-cip_api.destroy_particle_image.argtypes   = [c.c_void_p]
-cip_api.destroy_particle_image.restype = None
 
-################################################################################
-# PadsImage
-################################################################################
+    def extract_images(self,
+                       start_time,
+                       end_time,
+                       output_path = None,
+                       regexp = None):
 
-class PadsImage:
+        #
+        # Define fit predicate function.
+        #
+        if not regexp is None:
+            regexp = re.compile(regexp)
 
-    def __init__(self, filename):
-        self.ptr = cip_api.read_image_file(filename.encode())
-        self.set_timestamp_index(0)
+        def matches(f):
+            if regexp is None:
+                return True
+            return not regexp.match(f) is None
 
-    def __del__(self):
-        if not self is None:
-            if not self.ptr is None:
-                cip_api.destroy_image_file(self.ptr)
-                self.ptr = None
+        if output_path is None:
+            output_path = os.getcwd()
 
-    def set_timestamp_index(self, index):
-        ts = cip_api.set_timestamp_index(self.ptr, index)
-        self._time = datetime.datetime(ts.year,
-                                      ts.month,
-                                      ts.day,
-                                      ts.hour,
-                                      ts.minute,
-                                      ts.second,
-                                      ts.milliseconds * 1000)
-        return ts
+        #
+        # Loop over all index files.
+        #
 
-    def get_particle_image(self):
-        ptr = cip_api.get_particle_image(self.ptr)
-        struct = ptr[0]
-        return ParticleImage(ptr, struct, self._time)
+        for i, f in enumerate(self.index_files):
+            if matches(f):
 
-    @property
-    def n_timestamps(self):
-        return (c.c_ulong * 2).from_address(self.ptr)[0]
+                print("Opening index file {}".format(f))
+                index = PadsIndexFile(f)
 
-    @property
-    def timestamp_index(self):
-        return (c.c_ulong * 2).from_address(self.ptr)[1]
+                # Loop over timestamps in index file.
+                for j in range(index.n_timestamps):
+                    ts = index.get_next_timestamp().to_datetime()
+                    if (start_time <= ts) and (ts <= end_time):
+                        self._extract_images(i, j, output_path)
 
-class ParticleImage:
 
-    def __init__(self, ptr_, struct_, timestamp_):
-        self.ptr = ptr_
-        self.struct = struct_
-        self.timestamp = timestamp_
-
-    def __del__(self):
-        if not self is None:
-            if not self.ptr is None:
-                cip_api.destroy_particle_image(self.ptr)
-                self.ptr = None
-
-    @property
-    def airspeed(self):
-        return self.struct.v_air
-
-    @property
-    def particle_counter(self):
-        return self.struct.count
-
-    @property
-    def slices(self):
-        return self.struct.slices
-
-    @property
-    def time(self):
-        dt = datetime.timedelta(
-            hours = self.struct.hours,
-            minutes = self.struct.minutes,
-            seconds = self.struct.seconds,
-            milliseconds = self.struct.milliseconds,
-            microseconds =  self.struct.microseconds
-        )
-        return self.timestamp + dt
-
-    @property
-    def data(self):
-        return np.array(self.struct.__array__, copy = True)

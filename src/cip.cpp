@@ -1,7 +1,10 @@
-#include <iostream>
-#include <fstream>
-#include <vector>
-#include <bitset>
+////////////////////////////////////////////////////////////////////////////////
+//
+// C-bindings for the functions in cip.h.
+//
+// Author: Simon Pfreundschuh
+//
+////////////////////////////////////////////////////////////////////////////////
 #include "cip.h"
 
 #define DLL __attribute__ ((visibility ("default")))
@@ -12,10 +15,13 @@
 
 extern "C" {
 
+    //
+    // PadsImageFile
+    //
+
     void * read_image_file(const char *filename_) {
         std::string filename(filename_);
         PadsImageFile *image = new PadsImageFile(filename);
-        std::cout << "Creating image:" << image << std::endl;
         return image;
     }
 
@@ -24,13 +30,33 @@ extern "C" {
     }
 
     TimeField set_timestamp_index(PadsImageFile *image, size_t index) {
-        std::cout << "Setting timestamp: " << image << " // " << index << std::endl;
         return image->set_timestamp_index(index);
     }
 
+    //
+    // PadsIndexFile
+    //
+
+    void * read_index_file(const char *filename_) {
+        std::string filename(filename_);
+        PadsIndexFile *index = new PadsIndexFile(filename);
+        return index;
+    }
+
+    void destroy_index_file(PadsIndexFile *index) {
+        delete index;
+    }
+
+    TimeField get_next_index(PadsIndexFile *index) {
+        return index->next_index();
+    }
+
+    //
+    // Particle images
+    //
+
     ParticleImage * get_particle_image(PadsImageFile *image) {
         ParticleImage * pi = new ParticleImage(image->get_particle_image());
-        std::cout << pi->hours << " / " << pi->minutes << std::endl;
         return pi;
     }
 
@@ -38,4 +64,3 @@ extern "C" {
         delete image;
     }
 }
-
