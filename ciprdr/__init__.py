@@ -1,3 +1,4 @@
+<<<<<<< Updated upstream
 """
 ciprdr
 ======
@@ -6,15 +7,25 @@ This module implements the user interface for the ciprdr python package.
 It provides functionality for extracting particle images from CIP raw
 data.
 """
+=======
+import os
+import glob
+>>>>>>> Stashed changes
 import ctypes as c
 import datetime
 import glob
 import numpy as np
+<<<<<<< Updated upstream
 import os
+=======
+import re
+>>>>>>> Stashed changes
 
 from PIL import Image
 from ciprdr.api import PadsImageFile, PadsIndexFile, ParticleImage
 
+
+from ciprdr.api import PadsImageFile, PadsIndexFile, ParticleImage
 
 class ImageFolder:
     """
@@ -84,6 +95,9 @@ class ImageFolder:
 
         if output_path is None:
             output_path = os.getcwd()
+
+        if not os.path.exists(output_path):
+            os.makedirs(output_path)
 
         #
         # Loop over all index files.
