@@ -10,16 +10,10 @@ data.
 =======
 import os
 import glob
->>>>>>> Stashed changes
 import ctypes as c
 import datetime
 import glob
 import numpy as np
-<<<<<<< Updated upstream
-import os
-=======
-import re
->>>>>>> Stashed changes
 
 from PIL import Image
 from ciprdr.api import PadsImageFile, PadsIndexFile, ParticleImage
