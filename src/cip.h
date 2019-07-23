@@ -25,6 +25,11 @@ struct TimeField {
 // Greyscale decompression
 ////////////////////////////////////////////////////////////////////////////////
 
+/** Stream of compressed CIP greyscale image data
+ *
+ * Objects of this class decompress a binary stream of CIP greyscale image
+ * data.
+ */
 struct GreyScaleStream {
 
     GreyScaleStream(std::fstream &input_)
