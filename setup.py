@@ -14,4 +14,3 @@ setup (name = 'ciprdr',
        images.
        ''',
        ext_modules = [ciprdr_cpp])
-

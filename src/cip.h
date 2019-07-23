@@ -89,6 +89,9 @@ struct GreyScaleStream {
         }
     }
 
+    void back() {
+        count ++;
+    }
 
     std::fstream * input = nullptr;
     size_t count = 0;
@@ -129,22 +132,21 @@ struct ParticleImage {
         // Read the header.
         // Note that bits need not be reversed due
         unsigned char first = next_particle_boundary(gs);
-        if (first > 3) {
+        if (first != 0) {
             valid = false;
             return;
         }
         header[0] = first;
-
         for (size_t i = 1; i < 64; ++i) {
-
             // Read byte and check for validity.
             unsigned char in = gs.decompress();
-            if (in > 3) {
+            if ((in > 3) || ((i < 28) && (in != 0))) {
                 valid = false;
                 return;
             }
             header[i] = in;
         }
+        valid = check();
 
         v_air = get_number(56, 63);
         count = get_number(64, 79);
@@ -154,6 +156,12 @@ struct ParticleImage {
         minutes = get_number(109, 114);
         hours = get_number(115, 119);
         slices = get_number(120, 127);
+
+        if (slices > 100) {
+            slices = 0;
+            valid = false;
+            return;
+        }
 
         if (slices > 1) {
             image = new char[(slices - 1) * 64];
@@ -168,7 +176,6 @@ struct ParticleImage {
                 image[i] = in;
             }
         }
-        valid = check();
     }
 
     ParticleImage(ParticleImage &&other) {
@@ -254,6 +261,7 @@ struct ParticleImage {
         // Ignore consecutive ones.
         while (in == 3) {
             in = gs.decompress();
+            counter++;
         }
         return in;
     }
