@@ -9,6 +9,8 @@
 #include <fstream>
 #include <bitset>
 #include <memory>
+#include <vector>
+#include <algorithm>
 
 struct TimeField {
     short year;
@@ -30,15 +32,26 @@ struct TimeField {
  * Objects of this class decompress a binary stream of CIP greyscale image
  * data.
  */
-struct GreyScaleStream {
+struct GreyscaleStream {
 
-    GreyScaleStream(std::fstream &input_)
+    /** State of the stream.
+     *
+     * The state of the greyscale stream is used as a marker to allow
+     * going back in the byte stream.
+     */
+    struct State {
+        size_t count = 0;
+        char current_byte = 0;
+        char last_two_bits = 0;
+    };
+
+    GreyscaleStream(std::fstream &input_)
         : input(&input_), limited(false)
     {
         // Nothing to do here.
     }
 
-    GreyScaleStream(std::fstream &input_, size_t size_)
+    GreyscaleStream(std::fstream &input_, size_t size_)
         : input(&input_), size(size_), limited(true)
     {
             // Nothing to do here.
@@ -89,8 +102,93 @@ struct GreyScaleStream {
         }
     }
 
+    State get_marker() {
+        return State{count, current_byte, last_two_bits};
+    }
+
+    void set_state(State m) {
+        count = m.count;
+        current_byte = m.current_byte;
+        last_two_bits = m.last_two_bits;
+    }
+
     void back() {
-        count ++;
+        std::bitset<8> bits(current_byte);
+        size_t current_count = 0;
+        ++count;
+
+        if (bits[7]) {
+            current_count = (current_byte & 0x7F);
+        } else if (bits[6]) {
+            current_count = 3;
+        } else if (bits[4]) {
+            current_count = 2;
+        } else if (bits[2]) {
+            current_count = 1;
+        } else {
+            current_count = 3;
+        }
+
+        if (count == current_count) {
+
+            // Find non-zero byte
+
+            input->unget();
+            input->unget();
+            input->read(reinterpret_cast<char *>(&current_byte), 1);
+
+            while (current_byte == 0) {
+               input->unget();
+               input->unget();
+               input->read(reinterpret_cast<char *>(&current_byte), 1);
+            };
+
+            // Now determine last two-bits of previous byte
+            unsigned char previous_last_two = 0x80;
+            size_t steps = 0;
+            while (previous_last_two & 0x80) {
+                std::bitset<8> bits2(previous_last_two);
+                input->unget();
+                input->unget();
+                input->read(reinterpret_cast<char *>(&previous_last_two), 1);
+                ++steps;
+            };
+
+            // Now get back to previous position.
+            for (size_t i = 0; i < steps; ++i) {
+                input->get();
+            }
+
+            last_two_bits = previous_last_two & 0x3;
+            bits = std::bitset<8>(current_byte);
+
+            count = 0;
+        }
+    }
+
+    void back(size_t n) {
+        for (size_t i = 0; i < n; ++i) {
+            back();
+        }
+    }
+
+    std::vector<char> peek(size_t n) {
+        size_t count_prev = count;
+        size_t pos = input->tellg();
+        char current_byte_prev = current_byte;
+        char last_two_bits_prev = last_two_bits;
+
+        std::vector<char> data(n);
+        for (size_t i = 0; i < n; ++i) {
+            data[i] = decompress();
+        }
+
+        input->seekg(pos);
+        count = count_prev;
+        current_byte = current_byte_prev;
+        last_two_bits = last_two_bits_prev;
+
+        return data;
     }
 
     std::fstream * input = nullptr;
@@ -107,7 +205,7 @@ struct GreyScaleStream {
 // Particle images
 ////////////////////////////////////////////////////////////////////////////////
 
-/** CIP particle image read from GreyScaleStream.
+/** CIP particle image read from GreyscaleStream.
  *
  * Objects of this class represent particle images that are read from a
  * CIP greyscale image stream. The image consists of a 64-byte header slice,
@@ -127,27 +225,25 @@ struct ParticleImage {
     /**
      * Read particle image from GreyscaleStream object.
      */
-    ParticleImage(GreyScaleStream &gs) {
+    ParticleImage(GreyscaleStream &gs) {
 
         // Read the header.
         // Note that bits need not be reversed due
-        unsigned char first = next_particle_boundary(gs);
-        if (first != 0) {
-            valid = false;
-            return;
-        }
-        header[0] = first;
-        for (size_t i = 1; i < 64; ++i) {
+        find_next_particle_boundary(gs);
+        gs.back();
+
+        for (size_t i = 0; i < 64; ++i) {
             // Read byte and check for validity.
             unsigned char in = gs.decompress();
-            if ((in > 3) || ((i < 28) && (in != 0))) {
+            if (in > 3) {
                 valid = false;
+                slices = 0;
                 return;
             }
             header[i] = in;
         }
-        valid = check();
 
+        // Decode particle header.
         v_air = get_number(56, 63);
         count = get_number(64, 79);
         microseconds = get_number(83, 92);
@@ -157,25 +253,47 @@ struct ParticleImage {
         hours = get_number(115, 119);
         slices = get_number(120, 127);
 
-        if (slices > 100) {
-            slices = 0;
-            valid = false;
-            return;
-        }
-
+        // Read slices.
+        // Stop if more than 128 threes are encountered.
+        size_t threes = 0;
+        size_t slice_counter = 0;
+        GreyscaleStream::State marker = gs.get_marker();
+        std::cout << "Reading " << slices << " slices." << std::endl;
         if (slices > 1) {
             image = new char[(slices - 1) * 64];
+            // Initialize image data to 0.
+            for (size_t i = 0; i < (slices - 1) * 64; ++i) {
+                image[i] = 3;
+            }
             // Read image slices
             for (size_t i = 0; i < (slices - 1) * 64; ++i) {
                 // Read byte and check for validity.
+                slice_counter = i / 64;
                 unsigned char in = gs.decompress();
                 if (in > 3) {
                     valid = false;
                     return;
                 }
                 image[i] = in;
+
+                if (in == 3) {
+                    threes++;
+                } else if (threes > 127) {
+                    if (in == 0) {
+                        auto data = gs.peek(27);
+                        auto pred = [](char x){return x == 0;};
+                        if (std::all_of(data.begin(), data.end(), pred)) {
+                            gs.set_state(marker);
+                            break;
+                        }
+                    }
+                } else {
+                    threes = 0;
+                    marker = gs.get_marker();
+                }
             }
         }
+        slices = slice_counter + 1;
     }
 
     ParticleImage(ParticleImage &&other) {
@@ -237,17 +355,17 @@ struct ParticleImage {
     /**
      * Find start of next particle.
      */
-    static char next_particle_boundary(GreyScaleStream &gs) {
+    static void find_next_particle_boundary(GreyscaleStream &gs) {
         long threes = 0;
         long counter = 1;
         char in = 0;
 
-        while (threes < 128) {
+        while (threes < 64) {
 
             // Get byte and check validity.
             in = gs.decompress();
             if (in > 3) {
-                return 4;
+                return;
             }
 
             counter++;
@@ -263,7 +381,6 @@ struct ParticleImage {
             in = gs.decompress();
             counter++;
         }
-        return in;
     }
 
     bool check() {
@@ -290,7 +407,7 @@ struct PadsImageFile {
     size_t n_timestamps = 0;
     size_t timestamp_index = 0;
     std::fstream file;
-    GreyScaleStream gs;
+    GreyscaleStream gs;
 
     PadsImageFile(std::string filename)
         : file(filename, std::fstream::in | std::fstream::binary),
@@ -308,7 +425,7 @@ struct PadsImageFile {
         file.seekg(index * 4112, file.beg);
         TimeField tf;
         file.read(reinterpret_cast<char *>(&tf), sizeof(tf));
-        gs = GreyScaleStream(file, 4096);
+        gs = GreyscaleStream(file, 4096);
         return tf;
     }
 

@@ -17,5 +17,6 @@ tf = images.find_timestamp(t)
 def next_image(n = 1):
     for i in range(n):
         img = tf[0].get_particle_image()
+    print(img.struct.slices, img.struct.valid)
     plt.matshow(img.data)
     plt.show()
