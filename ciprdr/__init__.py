@@ -73,7 +73,6 @@ class ImageFolder:
 
         if len(images) > 0:
             data = np.concatenate(images)
-            print(data.shape)
             img = Image.fromarray(data.T, mode = "L")
             tt = (t.year, t.month, t.day, t.hour,
                   t.minute, t.second, t.microsecond // 1000)

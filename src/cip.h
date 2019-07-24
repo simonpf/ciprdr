@@ -283,6 +283,7 @@ struct ParticleImage {
                         auto data = gs.peek(27);
                         auto pred = [](char x){return x == 0;};
                         if (std::all_of(data.begin(), data.end(), pred)) {
+                            slices = slice_counter + 1;
                             gs.set_state(marker);
                             break;
                         }
@@ -293,7 +294,6 @@ struct ParticleImage {
                 }
             }
         }
-        slices = slice_counter + 1;
     }
 
     ParticleImage(ParticleImage &&other) {

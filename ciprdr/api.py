@@ -55,9 +55,9 @@ class ParticleImageStruct(c.Structure):
 
     @property
     def __array__(self):
-        if self.slices == 0:
+        if self.slices <= 1:
             return np.zeros((0, 64))
-        return np.ctypeslib.as_array(self.image, shape = (self.slices, 64))
+        return np.ctypeslib.as_array(self.image, shape = (self.slices - 1, 64))
 
 
 cip_api.read_index_file.argtypes = [c.c_char_p]
